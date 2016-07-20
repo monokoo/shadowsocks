@@ -123,33 +123,33 @@ class DbTransfer(object):
 					user=get_config().MYSQL_USER, passwd=get_config().MYSQL_PASS,
 					db=get_config().MYSQL_DB, charset='utf8')
 
-		if get_config().NODE_GROUP_ENABLE == 0:			
-		  cur = conn.cursor()
-		  cur.execute("SELECT " + ','.join(keys) + " FROM user")
+		if get_config().NODE_GROUP_ENABLE == 0:
+			cur = conn.cursor()
+			cur.execute("SELECT " + ','.join(keys) + " FROM user")
 		
 		else:
-		  conn.autocommit(True)		
-		  cur = conn.cursor()
+			conn.autocommit(True)
+			cur = conn.cursor()
 		
-		  cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(get_config().NODE_ID) + "'")
-		  nodeinfo = cur.fetchone()
-		  
-		  if nodeinfo == None :
-		  	rows = []
-		  	cur.close()
-		  	conn.commit()
-		  	conn.close()
-		  	return rows
-		  
-		  cur.close()
-		  
-		  if nodeinfo[0] == 0 :
-		  	node_group_sql = ""
-		  else:
-		  	node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
-		  
-		  cur = conn.cursor()
-		  cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
+			cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(get_config().NODE_ID) + "'")
+			nodeinfo = cur.fetchone()
+		
+			if nodeinfo == None :
+				rows = []
+				cur.close()
+				conn.commit()
+				conn.close()
+				return rows
+		
+			cur.close()
+		
+			if nodeinfo[0] == 0 :
+				node_group_sql = ""
+			else:
+				node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
+		
+			cur = conn.cursor()
+			cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
 		rows = []
 		for r in cur.fetchall():
 			d = {}
