@@ -149,7 +149,7 @@ class DbTransfer(object):
 		  	node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
 		  
 		  cur = conn.cursor()
-		  cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `transfer_enable`>`u`+`d`")
+		  cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
 		rows = []
 		for r in cur.fetchall():
 			d = {}
