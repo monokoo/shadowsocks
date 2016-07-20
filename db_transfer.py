@@ -233,7 +233,7 @@ class DbTransfer(object):
 				#new_servers[port] = passwd
 				protocol = cfg.get('protocol', ServerPool.get_instance().config.get('protocol', 'origin'))
 				obfs = cfg.get('obfs', ServerPool.get_instance().config.get('obfs', 'plain'))
-				logging.info('db start server at port [%s] pass [%s] method [%s] protocol [%s] obfs [%s]' % (port, passwd, method, protocol, obfs))
+				logging.info('db start server at port [%s] pass [%s] protocol [%s] obfs [%s]' % (port, passwd, protocol, obfs))
 				ServerPool.get_instance().new_server(port, cfg)
 
 		for row in last_rows:
@@ -252,7 +252,7 @@ class DbTransfer(object):
 				passwd, cfg = new_servers[port]
 				protocol = cfg.get('protocol', ServerPool.get_instance().config.get('protocol', 'origin'))
 				obfs = cfg.get('obfs', ServerPool.get_instance().config.get('obfs', 'plain'))
-				logging.info('db start server at port [%s] pass [%s] method [%s] protocol [%s] obfs [%s]' % (port, passwd, method, protocol, obfs))
+				logging.info('db start server at port [%s] pass [%s] protocol [%s] obfs [%s]' % (port, passwd, protocol, obfs))
 				ServerPool.get_instance().new_server(port, cfg)
 
 	@staticmethod
