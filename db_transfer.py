@@ -60,70 +60,6 @@ class TransferBase(object):
 			self.last_update_transfer[id] = [last[0] + update_transfer[id][0], last[1] + update_transfer[id][1]]
 		self.last_get_transfer = curr_transfer
 
-
-	def pull_db_all_user(self):
-		import cymysql
-		#数据库所有用户信息
-		try:
-			switchrule = importloader.load('switchrule')
-			keys = switchrule.getKeys()
-		except Exception as e:
-			keys = ['port', 'u', 'd', 'transfer_enable', 'passwd', 'enable' ]
-		if get_config().MYSQL_SSL_ENABLE == 1:
-			conn = cymysql.connect(host=get_config().MYSQL_HOST, port=get_config().MYSQL_PORT,
-					user=get_config().MYSQL_USER, passwd=get_config().MYSQL_PASS,
-					db=get_config().MYSQL_DB, charset='utf8',
-					ssl={'ca':get_config().MYSQL_SSL_CA,'cert':get_config().MYSQL_SSL_CERT,'key':get_config().MYSQL_SSL_KEY})
-		else:
-			conn = cymysql.connect(host=get_config().MYSQL_HOST, port=get_config().MYSQL_PORT,
-					user=get_config().MYSQL_USER, passwd=get_config().MYSQL_PASS,
-					db=get_config().MYSQL_DB, charset='utf8')
-
-		if get_config().NODE_GROUP_ENABLE == 0:
-			cur = conn.cursor()
-			cur.execute("SELECT " + ','.join(keys) + " FROM user")
-		
-		else:
-			conn.autocommit(True)
-			cur = conn.cursor()
-		
-			cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(get_config().NODE_ID) + "'")
-			nodeinfo = cur.fetchone()
-		
-			if nodeinfo == None :
-				rows = []
-				cur.close()
-				conn.commit()
-				conn.close()
-				return rows
-		
-			cur.close()
-		
-			if nodeinfo[0] == 0 :
-				node_group_sql = ""
-			else:
-				node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
-		
-			cur = conn.cursor()
-			cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
-		rows = []
-		for r in cur.fetchall():
-			d = {}
-			for column in range(len(keys)):
-				d[keys[column]] = r[column]
-			rows.append(d)
-		cur.close()
-		conn.close()
-		return rows
-
-	def cmp(self, val1, val2):
-		if type(val1) is bytes:
-			val1 = common.to_str(val1)
-		if type(val2) is bytes:
-			val2 = common.to_str(val2)
-		return val1 == val2
-
-
 	def del_server_out_of_bound_safe(self, last_rows, rows):
 		#停止超流量的服务
 		#启动没超流量的服务
@@ -357,8 +293,34 @@ class DbTransfer(TransferBase):
 					user=self.cfg["user"], passwd=self.cfg["password"],
 					db=self.cfg["db"], charset='utf8')
 
-		cur = conn.cursor()
-		cur.execute("SELECT " + ','.join(keys) + " FROM user")
+		if get_config().NODE_GROUP_ENABLE == 0:
+			cur = conn.cursor()
+			cur.execute("SELECT " + ','.join(keys) + " FROM user")
+		
+		else:
+			conn.autocommit(True)
+			cur = conn.cursor()
+		
+			cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(get_config().NODE_ID) + "'")
+			nodeinfo = cur.fetchone()
+		
+			if nodeinfo == None :
+				rows = []
+				cur.close()
+				conn.commit()
+				conn.close()
+				return rows
+		
+			cur.close()
+		
+			if nodeinfo[0] == 0 :
+				node_group_sql = ""
+			else:
+				node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
+		
+			cur = conn.cursor()
+			cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
+			
 		rows = []
 		for r in cur.fetchall():
 			d = {}
