@@ -6,24 +6,12 @@ SERVER_PUB_ADDR = '127.0.0.1' # mujson_mgr need this to generate ssr link
 #mudb
 MUDB_FILE = 'mudb.json'
 
-# Mysql
-MYSQL_HOST = '127.0.0.1'
-MYSQL_PORT = 3306
-MYSQL_USER = 'ss'
-MYSQL_PASS = 'ss'
-MYSQL_DB = 'shadowsocks'
-MYSQL_UPDATE_TIME = 60
 
+#Node Group
 NODE_GROUP_ENABLE = 0
-
-MYSQL_SSL_ENABLE = 0
-MYSQL_SSL_CA = ''
-MYSQL_SSL_CERT = ''
-MYSQL_SSL_KEY = ''
+# Mysql
 MYSQL_CONFIG = 'usermysql.json'
 
 
 # API
 MUAPI_CONFIG = 'usermuapi.json'
-
-
