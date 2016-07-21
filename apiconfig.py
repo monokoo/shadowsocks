@@ -9,6 +9,8 @@ MUDB_FILE = 'mudb.json'
 
 #Node Group
 NODE_GROUP_ENABLE = 0
+
+
 # Mysql
 MYSQL_CONFIG = 'usermysql.json'
 
