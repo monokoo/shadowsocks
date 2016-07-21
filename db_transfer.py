@@ -301,7 +301,7 @@ class DbTransfer(TransferBase):
 			conn.autocommit(True)
 			cur = conn.cursor()
 		
-			cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(get_config().node_id) + "'")
+			cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(self.cfg["node_id"]) + "'")
 			nodeinfo = cur.fetchone()
 		
 			if nodeinfo == None :
