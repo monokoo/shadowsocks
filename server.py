@@ -53,7 +53,9 @@ def main():
 		else:
 			thread = MainThread(db_transfer.Dbv3Transfer)
 		thread.start()
-		thread.start_new_thread(auto_thread.auto_thread,())
+		threadAutoexec = threading.Thread(group = None, target = auto_thread.auto_thread, name = "autoexec", args = (), kwargs = {})  
+		threadAutoexec.start()
+		
 		try:
 			while thread.is_alive():
 				time.sleep(10)
