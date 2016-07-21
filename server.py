@@ -26,7 +26,6 @@ if __name__ == '__main__':
 
 import server_pool
 import db_transfer
-import auto_thread
 from shadowsocks import shell
 from configloader import load_config, get_config
 
@@ -53,9 +52,6 @@ def main():
 		else:
 			thread = MainThread(db_transfer.Dbv3Transfer)
 		thread.start()
-		threadAutoexec = threading.Thread(group = None, target = auto_thread.auto_thread, name = "autoexec", args = (), kwargs = {})  
-		threadAutoexec.start()
-		
 		try:
 			while thread.is_alive():
 				time.sleep(10)
