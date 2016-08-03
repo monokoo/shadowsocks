@@ -26,6 +26,7 @@ import logging
 import binascii
 import traceback
 import random
+import platform
 
 from shadowsocks import encrypt, obfs, eventloop, shell, common
 from shadowsocks.common import pre_parse_header, parse_header
@@ -345,23 +346,38 @@ class TCPRelayHandler(object):
         addrs = socket.getaddrinfo(client_address[0], client_address[1], 0, socket.SOCK_STREAM, socket.SOL_TCP)
         af, socktype, proto, canonname, sa = addrs[0]
         address_bytes = common.inet_pton(af, sa[0])
-        if len(address_bytes) == 16:
+        if af == socket.AF_INET6:
             addr = struct.unpack('>Q', address_bytes[8:])[0]
-        if len(address_bytes) == 4:
+        elif af == socket.AF_INET:
             addr = struct.unpack('>I', address_bytes)[0]
         else:
             addr = 0
-        if type(host_list) == list:
-            host_post = common.to_str(host_list[((hash_code & 0xffffffff) + addr) % len(host_list)])
-        else:
-            host_post = common.to_str(host_list)
-        items = host_post.rsplit(':', 1)
-        if len(items) > 1:
-            try:
-                return (items[0], int(items[1]))
-            except:
-                pass
-        return (host_post, 80)
+
+        host_port = []
+        match_port = False
+        if type(host_list) != list:
+            host_list = [host_list]
+        for host in host_list:
+            items = common.to_str(host).rsplit(':', 1)
+            if len(items) > 1:
+                try:
+                    port = int(items[1])
+                    if port == self._server._listen_port:
+                        match_port = True
+                    host_port.append((items[0], port))
+                except:
+                    pass
+            else:
+                host_port.append((host, 80))
+
+        if match_port:
+            last_host_port = host_port
+            host_port = []
+            for host in last_host_port:
+                if host[1] == self._server._listen_port:
+                    host_port.append(host)
+
+        return host_port[((hash_code & 0xffffffff) + addr) % len(host_port)]
 
     def _handel_protocol_error(self, client_address, ogn_data):
         logging.warn("Protocol ERROR, TCP ogn data %s from %s:%d via port %d" % (binascii.hexlify(ogn_data), client_address[0], client_address[1], self._server._listen_port))
@@ -473,10 +489,9 @@ class TCPRelayHandler(object):
                     data = self._handel_protocol_error(self._client_address, ogn_data)
                     header_result = parse_header(data)
             connecttype, remote_addr, remote_port, header_length = header_result
-            common.connect_log('%s connecting %s:%d from %s:%d' %
+            common.connect_log('%s connecting %s:%d via port %d' %
                         ((connecttype == 0) and 'TCP' or 'UDP',
-                            common.to_str(remote_addr), remote_port,
-                            self._client_address[0], self._client_address[1]))
+                            common.to_str(remote_addr), remote_port, self._server._listen_port))
             self._remote_address = (common.to_str(remote_addr), remote_port)
             self._remote_udp = (connecttype != 0)
             # pause reading
@@ -549,6 +564,23 @@ class TCPRelayHandler(object):
             remote_sock_v6.setblocking(False)
         else:
             remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            remote_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if self._is_local:
+                val_idle = 60
+                val_intvl = 5
+            else:
+                val_idle = 120
+                val_intvl = 20
+            if platform.system() in ['Linux']:
+                remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, val_idle)
+                remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, val_intvl)
+                remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPCNT, 5)
+            elif platform.system() in ['Windows']:
+                remote_sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 1000 * val_idle, 1000 * val_intvl))
+            elif platform.system() in ["Darwin"]: #OSX
+                TCP_KEEPALIVE = 0x10
+                remote_sock.setsockopt(socket.SOL_TCP, TCP_KEEPALIVE, val_intvl * 2)
+
             if not self._is_local:
                 bind_addr = ''
                 if self._bind and af == socket.AF_INET:
@@ -815,7 +847,7 @@ class TCPRelayHandler(object):
         if self._remote_sock:
             logging.error(eventloop.get_sock_error(self._remote_sock))
             if self._remote_address:
-                logging.error("when connect to %s:%d from %s:%d" % (self._remote_address[0], self._remote_address[1], self._client_address[0], self._client_address[1]))
+                logging.error("when connect to %s:%d" % (self._remote_address[0], self._remote_address[1]))
             else:
                 logging.error("exception from %s:%d" % (self._client_address[0], self._client_address[1]))
         self.destroy()

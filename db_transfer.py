@@ -23,11 +23,14 @@ class TransferBase(object):
 		self.user_pass = {}
 		self.port_uid_table = {}
 		self.onlineuser_cache = lru_cache.LRUCache(timeout=60*30)
+		self.pull_ok = False
 
 	def load_cfg(self):
 		pass
 
 	def push_db_all_user(self):
+		if self.pull_ok is False:
+			return
 		#更新用户流量到数据库
 		last_transfer = self.last_update_transfer
 		curr_transfer = ServerPool.get_instance().get_servers_transfer()
@@ -179,6 +182,8 @@ class TransferBase(object):
 				try:
 					db_instance.push_db_all_user()
 					rows = db_instance.pull_db_all_user()
+					if rows:
+						db_instance.pull_ok = True
 					db_instance.del_server_out_of_bound_safe(last_rows, rows)
 					last_rows = rows
 				except Exception as e:
@@ -278,11 +283,6 @@ class DbTransfer(TransferBase):
 	def pull_db_all_user(self):
 		import cymysql
 		#数据库所有用户信息
-		try:
-			switchrule = importloader.load('switchrule')
-			keys = switchrule.getKeys(self.key_list)
-		except Exception as e:
-			keys = self.key_list
 		if self.cfg["ssl_enable"] == 1:
 			conn = cymysql.connect(host=self.cfg["host"], port=self.cfg["port"],
 					user=self.cfg["user"], passwd=self.cfg["password"],
@@ -292,6 +292,17 @@ class DbTransfer(TransferBase):
 			conn = cymysql.connect(host=self.cfg["host"], port=self.cfg["port"],
 					user=self.cfg["user"], passwd=self.cfg["password"],
 					db=self.cfg["db"], charset='utf8')
+
+		rows = self.pull_db_users(conn)
+		conn.close()
+		return rows
+
+	def pull_db_users(self, conn):
+		try:
+			switchrule = importloader.load('switchrule')
+			keys = switchrule.getKeys(self.key_list)
+		except Exception as e:
+			keys = self.key_list
 
 		if get_config().NODE_GROUP_ENABLE == 0:
 			cur = conn.cursor()
@@ -320,7 +331,7 @@ class DbTransfer(TransferBase):
 		
 			cur = conn.cursor()
 			cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(nodeinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
-			
+
 		rows = []
 		for r in cur.fetchall():
 			d = {}
@@ -328,7 +339,6 @@ class DbTransfer(TransferBase):
 				d[keys[column]] = r[column]
 			rows.append(d)
 		cur.close()
-		conn.close()
 		return rows
 
 class Dbv3Transfer(DbTransfer):
@@ -420,6 +430,42 @@ class Dbv3Transfer(DbTransfer):
 		conn.close()
 		return update_transfer
 
+	def pull_db_users(self, conn):
+		try:
+			switchrule = importloader.load('switchrule')
+			keys = switchrule.getKeys(self.key_list)
+		except Exception as e:
+			keys = self.key_list
+
+		cur = conn.cursor()
+
+		node_info_keys = ['traffic_rate']
+		cur.execute("SELECT " + ','.join(node_info_keys) +" FROM ss_node where `id`='" + str(self.cfg["node_id"]) + "'")
+		nodeinfo = cur.fetchone()
+
+		if nodeinfo == None:
+			rows = []
+			cur.close()
+			conn.commit()
+			return rows
+		cur.close()
+
+		node_info_dict = {}
+		for column in range(len(nodeinfo)):
+			node_info_dict[node_info_keys[column]] = nodeinfo[column]
+		self.cfg['transfer_mul'] = float(node_info_dict['traffic_rate'])
+
+		cur = conn.cursor()
+		cur.execute("SELECT " + ','.join(keys) + " FROM user")
+		rows = []
+		for r in cur.fetchall():
+			d = {}
+			for column in range(len(keys)):
+				d[keys[column]] = r[column]
+			rows.append(d)
+		cur.close()
+		return rows
+
 	def load(self):
 		import os
 		return os.popen("cat /proc/loadavg | awk '{ print $1\" \"$2\" \"$3 }'").readlines()[0]
@@ -429,7 +475,7 @@ class Dbv3Transfer(DbTransfer):
 
 	def traffic_format(self, traffic):
 		if traffic < 1024 * 8:
-			return str(traffic) + "B";
+			return str(int(traffic)) + "B";
 
 		if traffic < 1024 * 1024 * 2:
 			return str(round((traffic / 1024.0), 2)) + "KB";
