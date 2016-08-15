@@ -445,8 +445,6 @@ class Dbv3Transfer(DbTransfer):
 			node_info_dict[node_info_keys[column]] = nodeinfo[column]
 		self.cfg['transfer_mul'] = float(node_info_dict['traffic_rate'])
 
-		cur = conn.cursor()
-		cur.execute("SELECT " + ','.join(keys) + " FROM user")
 		
 		if get_config().NODE_GROUP_ENABLE == 0:
 			cur = conn.cursor()
