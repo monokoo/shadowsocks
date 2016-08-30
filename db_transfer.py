@@ -189,6 +189,9 @@ class TransferBase(object):
 		socket.setdefaulttimeout(timeout)
 		last_rows = []
 		db_instance = obj()
+		ServerPool.get_instance()
+		import resource
+		logging.info('current process RLIMIT_NOFILE resource: soft %d hard %d'  % resource.getrlimit(resource.RLIMIT_NOFILE))
 		try:
 			while True:
 				load_config()
