@@ -92,7 +92,7 @@ class MuMgr(object):
 
 	def add(self, user):
 		up = {'enable': True, 'u': 0, 'd': 0, 'method': "aes-128-cfb",
-		'protocol': "auth_sha1_v3_compatible",
+		'protocol': "auth_sha1_v4_compatible",
 		'obfs': "tls1.2_ticket_auth_compatible",
 		'transfer_enable': 1125899906842624}
 		up['passwd'] = self.rand_pass()
@@ -204,19 +204,20 @@ def main():
 	action = None
 	user = {}
 	fast_set_obfs = {'0': 'plain',
-			'1': 'http_simple_compatible',
-			'-1': 'http_simple',
-			'2': 'tls1.2_ticket_auth_compatible',
-			'-2': 'tls1.2_ticket_auth'}
+			'+1': 'http_simple_compatible',
+			'1': 'http_simple',
+			'+2': 'tls1.2_ticket_auth_compatible',
+			'2': 'tls1.2_ticket_auth'}
 	fast_set_protocol = {'0': 'origin',
-			'1': 'verify_sha1_compatible',
-			'-1': 'verify_sha1',
-			'2': 'auth_sha1_compatible',
-			'-2': 'auth_sha1',
-			'3': 'auth_sha1_v2_compatible',
-			'-3': 'auth_sha1_v2',
-			'4': 'auth_sha1_v3_compatible',
-			'-4': 'auth_sha1_v3'}
+			'+1': 'verify_sha1_compatible',
+			'1': 'verify_sha1',
+			'+2': 'auth_sha1_compatible',
+			'2': 'auth_sha1',
+			'+3': 'auth_sha1_v2_compatible',
+			'3': 'auth_sha1_v2',
+			'+4': 'auth_sha1_v4_compatible',
+			'4': 'auth_sha1_v4',
+			'a1': 'auth_aes128'}
 	fast_set_method = {'a0': 'aes-128-cfb',
 			'a1': 'aes-192-cfb',
 			'a2': 'aes-256-cfb',
