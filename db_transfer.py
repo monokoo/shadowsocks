@@ -503,7 +503,7 @@ class Dbv3Transfer(DbTransfer):
 				conn.autocommit(True)
 				cur = conn.cursor()
 			
-				cur.execute("SELECT `node_group`,`node_class` FROM ss_node where `id`='" + str(self.cfg["node_id"]) + "'")
+				cur.execute("SELECT `node_group`,`node_class`,`status` FROM ss_node where `id`='" + str(self.cfg["node_id"]) + "'")
 				classinfo = cur.fetchone()
 			
 				if classinfo == None :
@@ -519,9 +519,10 @@ class Dbv3Transfer(DbTransfer):
 					node_group_sql = ""
 				else:
 					node_group_sql = "AND `node_group`=" + str(classinfo[0])
-			
-				cur = conn.cursor()
-				cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(classinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
+
+				if classinfo[2] == 1 :			
+					cur = conn.cursor()
+					cur.execute("SELECT " + ','.join(keys) + " FROM user WHERE `user_class`>="+ str(classinfo[1]) +" "+node_group_sql+" AND`enable`=1 AND `expire_at`>now() AND `transfer_enable`>`u`+`d`")
 				#----end-add from monokoo-----
 			
 			rows = []
