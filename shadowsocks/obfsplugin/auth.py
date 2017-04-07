@@ -26,6 +26,7 @@ import base64
 import time
 import datetime
 import random
+import math
 import struct
 import zlib
 import hmac
@@ -81,9 +82,13 @@ class auth_base(plain.plain):
         super(auth_base, self).__init__(method)
         self.method = method
         self.no_compatible_method = ''
+        self.overhead = 7
 
     def init_data(self):
         return ''
+
+    def get_overhead(self, direction): # direction: true for c->s false for s->c
+        return self.overhead
 
     def set_server_info(self, server_info):
         self.server_info = server_info
@@ -102,6 +107,7 @@ class auth_base(plain.plain):
 
     def not_match_return(self, buf):
         self.raw_trans = True
+        self.overhead = 0
         if self.method == self.no_compatible_method:
             return (b'E'*2048, False)
         return (buf, False)
@@ -870,6 +876,9 @@ class auth_aes128(auth_base):
     def init_data(self):
         return obfs_auth_v2_data()
 
+    def get_overhead(self, direction): # direction: true for c->s false for s->c
+        return 9
+
     def set_server_info(self, server_info):
         self.server_info = server_info
         try:
@@ -1172,9 +1181,14 @@ class auth_aes128_sha1(auth_base):
         self.recv_id = 1
         self.user_id = None
         self.user_key = None
+        self.last_rnd_len = 0
+        self.overhead = 9
 
     def init_data(self):
         return obfs_auth_mu_data()
+
+    def get_overhead(self, direction): # direction: true for c->s false for s->c
+        return self.overhead
 
     def set_server_info(self, server_info):
         self.server_info = server_info
@@ -1184,24 +1198,41 @@ class auth_aes128_sha1(auth_base):
             max_client = 64
         self.server_info.data.set_max_client(max_client)
 
-    def rnd_data(self, buf_size):
-        if buf_size > 1200:
-            return b'\x01'
+    def trapezoid_random_float(self, d):
+        if d == 0:
+            return random.random()
+        s = random.random()
+        a = 1 - d
+        return (math.sqrt(a * a + 4 * d * s) - a) / (2 * d)
 
-        if self.pack_id > 4:
-            rnd_data = os.urandom(common.ord(os.urandom(1)[0]) % 32)
-        elif buf_size > 900:
-            rnd_data = os.urandom(common.ord(os.urandom(1)[0]) % 128)
-        else:
-            rnd_data = os.urandom(struct.unpack('>H', os.urandom(2))[0] % 512)
+    def trapezoid_random_int(self, max_val, d):
+        v = self.trapezoid_random_float(d)
+        return int(v * max_val)
 
-        if len(rnd_data) < 128:
-            return common.chr(len(rnd_data) + 1) + rnd_data
-        else:
-            return common.chr(255) + struct.pack('<H', len(rnd_data) + 3) + rnd_data
+    def rnd_data_len(self, buf_size, full_buf_size):
+        if full_buf_size >= self.server_info.buffer_size:
+            return 0
+        rev_len = self.server_info.tcp_mss - buf_size - 9
+        if rev_len == 0:
+            return 0
+        if rev_len < 0:
+            if rev_len > -self.server_info.tcp_mss:
+                return self.trapezoid_random_int(rev_len + self.server_info.tcp_mss, -0.3)
+            return common.ord(os.urandom(1)[0]) % 32
+        if buf_size > 900:
+            return struct.unpack('>H', os.urandom(2))[0] % rev_len
+        return self.trapezoid_random_int(rev_len, -0.3)
 
-    def pack_data(self, buf):
-        data = self.rnd_data(len(buf)) + buf
+    def rnd_data(self, buf_size, full_buf_size):
+        data_len = self.rnd_data_len(buf_size, full_buf_size)
+
+        if data_len < 128:
+            return common.chr(data_len + 1) + os.urandom(data_len)
+
+        return common.chr(255) + struct.pack('<H', data_len + 1) + os.urandom(data_len - 2)
+
+    def pack_data(self, buf, full_buf_size):
+        data = self.rnd_data(len(buf), full_buf_size) + buf
         data_len = len(data) + 8
         mac_key = self.user_key + struct.pack('<I', self.pack_id)
         mac = hmac.new(mac_key, struct.pack('<H', data_len), self.hashfunc).digest()[:2]
@@ -1255,6 +1286,7 @@ class auth_aes128_sha1(auth_base):
 
     def client_pre_encrypt(self, buf):
         ret = b''
+        ogn_data_len = len(buf)
         if not self.has_sent_header:
             head_size = self.get_head_size(buf, 30)
             datalen = min(len(buf), random.randint(0, 31) + head_size)
@@ -1262,9 +1294,10 @@ class auth_aes128_sha1(auth_base):
             buf = buf[datalen:]
             self.has_sent_header = True
         while len(buf) > self.unit_len:
-            ret += self.pack_data(buf[:self.unit_len])
+            ret += self.pack_data(buf[:self.unit_len], ogn_data_len)
             buf = buf[self.unit_len:]
-        ret += self.pack_data(buf)
+        ret += self.pack_data(buf, ogn_data_len)
+        self.last_rnd_len = ogn_data_len
         return ret
 
     def client_post_decrypt(self, buf):
@@ -1305,10 +1338,12 @@ class auth_aes128_sha1(auth_base):
         if self.raw_trans:
             return buf
         ret = b''
+        ogn_data_len = len(buf)
         while len(buf) > self.unit_len:
-            ret += self.pack_data(buf[:self.unit_len])
+            ret += self.pack_data(buf[:self.unit_len], ogn_data_len)
             buf = buf[self.unit_len:]
-        ret += self.pack_data(buf)
+        ret += self.pack_data(buf, ogn_data_len)
+        self.last_rnd_len = ogn_data_len
         return ret
 
     def server_post_decrypt(self, buf):
