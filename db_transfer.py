@@ -6,7 +6,7 @@ import time
 import sys
 from server_pool import ServerPool
 import traceback
-from shadowsocks import common, shell, lru_cache
+from shadowsocks import common, shell, lru_cache, obfs
 from configloader import load_config, get_config
 import importloader
 
@@ -110,7 +110,10 @@ class TransferBase(object):
 			merge_config_keys = ['password'] + read_config_keys
 			for name in cfg.keys():
 				if hasattr(cfg[name], 'encode'):
-					cfg[name] = cfg[name].encode('utf-8')
+					try:
+						cfg[name] = cfg[name].encode('utf-8')
+					except Exception as e:
+						logging.warning('encode cfg key "%s" fail, val "%s"' % (name, cfg[name]))
 
 			if port not in cur_servers:
 				cur_servers[port] = passwd
@@ -120,7 +123,7 @@ class TransferBase(object):
 
 			if allow:
 				allow_users[port] = passwd
-				if 'protocol' in cfg and 'protocol_param' in cfg and common.to_str(cfg['protocol']) in ['auth_aes128_md5', 'auth_aes128_sha1']:
+				if 'protocol' in cfg and 'protocol_param' in cfg and common.to_str(cfg['protocol']) in obfs.mu_protocol():
 					if '#' in common.to_str(cfg['protocol_param']):
 						mu_servers[port] = passwd
 						del allow_users[port]
