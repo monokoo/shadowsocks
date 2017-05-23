@@ -123,10 +123,32 @@ RSP_STATE_ERROR = b"\x03"
 RSP_STATE_DISCONNECT = b"\x04"
 RSP_STATE_REDIRECT = b"\x05"
 
+class UDPAsyncDNSHandler(object):
+    def __init__(self, params):
+        self.params = params
+        self.remote_addr = None
+        self.call_back = None
+
+    def resolve(self, dns_resolver, remote_addr, call_back):
+        self.call_back = call_back
+        self.remote_addr = remote_addr
+        dns_resolver.resolve(remote_addr[0], self._handle_dns_resolved)
+
+    def _handle_dns_resolved(self, result, error):
+        if error:
+            logging.error("%s when resolve DNS" % (error,)) #drop
+            return
+        if result:
+            ip = result[1]
+            if ip:
+                if self.call_back:
+                    self.call_back(self.remote_addr, None, ip, True, *self.params)
+                    return
+        logging.warning("can't resolve %s" % (self.remote_addr,))
+
 def client_key(source_addr, server_af):
     # notice this is server af, not dest af
     return '%s:%s:%d' % (source_addr[0], source_addr[1], server_af)
-
 
 class UDPRelay(object):
     def __init__(self, config, dns_resolver, is_local, stat_callback=None, stat_counter=None):
@@ -154,7 +176,7 @@ class UDPRelay(object):
         self._cache_dns_client = lru_cache.LRUCache(timeout=10,
                                          close_callback=self._close_client_pair)
         self._client_fd_to_server_addr = {}
-        self._dns_cache = lru_cache.LRUCache(timeout=1800)
+        #self._dns_cache = lru_cache.LRUCache(timeout=1800)
         self._eventloop = None
         self._closed = False
         self.server_transfer_ul = 0
@@ -311,41 +333,6 @@ class UDPRelay(object):
             client.info('close_client pass %s' % client)
             pass
 
-    def _pre_parse_udp_header(self, data):
-        if data is None:
-            return
-        datatype = common.ord(data[0])
-        if datatype == 0x8:
-            if len(data) >= 8:
-                crc = binascii.crc32(data) & 0xffffffff
-                if crc != 0xffffffff:
-                    logging.warn('uncorrect CRC32, maybe wrong password or '
-                                 'encryption method')
-                    return None
-                cmd = common.ord(data[1])
-                request_id = struct.unpack('>H', data[2:4])[0]
-                data = data[4:-4]
-                return (cmd, request_id, data)
-            elif len(data) >= 6 and common.ord(data[1]) == 0x0:
-                crc = binascii.crc32(data) & 0xffffffff
-                if crc != 0xffffffff:
-                    logging.warn('uncorrect CRC32, maybe wrong password or '
-                                 'encryption method')
-                    return None
-                cmd = common.ord(data[1])
-                data = data[2:-4]
-                return (cmd, 0, data)
-            else:
-                logging.warn('header too short, maybe wrong password or '
-                             'encryption method')
-                return None
-        return data
-
-    def _pack_rsp_data(self, cmd, request_id, data):
-        _rand_data = b"123456789abcdefghijklmnopqrstuvwxyz" * 2
-        reqid_str = struct.pack(">H", request_id)
-        return b''.join([CMD_VER_STR, common.chr(cmd), reqid_str, data, _rand_data[:random.randint(0, len(_rand_data))], reqid_str])
-
     def _handel_protocol_error(self, client_address, ogn_data):
         #raise Exception('can not parse header')
         logging.warn("Protocol ERROR, UDP ogn data %s from %s:%d" % (binascii.hexlify(ogn_data), client_address[0], client_address[1]))
@@ -398,14 +385,8 @@ class UDPRelay(object):
         #logging.info("UDP data %s" % (binascii.hexlify(data),))
         if not self._is_local:
             data = pre_parse_header(data)
-
-            data = self._pre_parse_udp_header(data)
             if data is None:
                 return
-
-            if type(data) is tuple:
-                return
-                #return self._handle_tcp_over_udp(data, r_addr)
 
         try:
             header_result = parse_header(data)
@@ -416,103 +397,101 @@ class UDPRelay(object):
         if header_result is None:
             self._handel_protocol_error(r_addr, ogn_data)
             return
-        connecttype, dest_addr, dest_port, header_length = header_result
+        connecttype, addrtype, dest_addr, dest_port, header_length = header_result
 
         if self._is_local:
-            connecttype = 3
+            addrtype = 3
             server_addr, server_port = self._get_a_server()
         else:
             server_addr, server_port = dest_addr, dest_port
 
-        if (connecttype & 7) == 3:
-            addrs = self._dns_cache.get(server_addr, None)
+        if (addrtype & 7) == 3:
+            handler = UDPAsyncDNSHandler((data, r_addr, uid, header_length))
+            handler.resolve(self._dns_resolver, (server_addr, server_port), self._handle_server_dns_resolved)
+        else:
+            self._handle_server_dns_resolved((server_addr, server_port), None, server_addr, False, data, r_addr, uid, header_length)
+
+    def _handle_server_dns_resolved(self, remote_addr, addrs, server_addr, dns_resolved, data, r_addr, uid, header_length):
+        try:
+            server_port = remote_addr[1]
             if addrs is None:
-                # TODO async getaddrinfo
                 addrs = socket.getaddrinfo(server_addr, server_port, 0,
-                                           socket.SOCK_DGRAM, socket.SOL_UDP)
-                if not addrs:
-                    # drop
-                    return
-                else:
-                    self._dns_cache[server_addr] = addrs
-        else:
-            addrs = socket.getaddrinfo(server_addr, server_port, 0,
-                                       socket.SOCK_DGRAM, socket.SOL_UDP)
-            if not addrs:
-                # drop
+                                            socket.SOCK_DGRAM, socket.SOL_UDP)
+            if not addrs: # drop
                 return
+            af, socktype, proto, canonname, sa = addrs[0]
+            server_addr = sa[0]
+            key = client_key(r_addr, af)
+            client_pair = self._cache.get(key, None)
+            if client_pair is None:
+                client_pair = self._cache_dns_client.get(key, None)
+            if client_pair is None:
+                if self._forbidden_iplist:
+                    if common.to_str(sa[0]) in self._forbidden_iplist:
+                        logging.debug('IP %s is in forbidden list, drop' % common.to_str(sa[0]))
+                        # drop
+                        return
+                if self._forbidden_portset:
+                    if sa[1] in self._forbidden_portset:
+                        logging.debug('Port %d is in forbidden list, reject' % sa[1])
+                        # drop
+                        return
+                client = socket.socket(af, socktype, proto)
+                client_uid = uid
+                client.setblocking(False)
+                self._socket_bind_addr(client, af)
+                is_dns = False
+                if len(data) > header_length + 13 and data[header_length + 4 : header_length + 12] == b"\x00\x01\x00\x00\x00\x00\x00\x00":
+                    is_dns = True
+                else:
+                    pass
+                if sa[1] == 53 and is_dns: #DNS
+                    logging.debug("DNS query %s from %s:%d" % (common.to_str(sa[0]), r_addr[0], r_addr[1]))
+                    self._cache_dns_client[key] = (client, uid)
+                else:
+                    self._cache[key] = (client, uid)
+                self._client_fd_to_server_addr[client.fileno()] = (r_addr, af)
 
-        af, socktype, proto, canonname, sa = addrs[0]
-        key = client_key(r_addr, af)
-        client_pair = self._cache.get(key, None)
-        if client_pair is None:
-            client_pair = self._cache_dns_client.get(key, None)
-        if client_pair is None:
-            if self._forbidden_iplist:
-                if common.to_str(sa[0]) in self._forbidden_iplist:
-                    logging.debug('IP %s is in forbidden list, drop' %
-                                  common.to_str(sa[0]))
-                    # drop
+                self._sockets.add(client.fileno())
+                self._eventloop.add(client, eventloop.POLL_IN, self)
+
+                logging.debug('UDP port %5d sockets %d' % (self._listen_port, len(self._sockets)))
+
+                if uid is None:
+                    user_id = self._listen_port
+                else:
+                    user_id = struct.unpack('<I', client_uid)[0]
+            else:
+                client, client_uid = client_pair
+            self._cache.clear(self._udp_cache_size)
+            self._cache_dns_client.clear(16)
+
+            if self._is_local:
+                ref_iv = [encrypt.encrypt_new_iv(self._method)]
+                self._protocol.obfs.server_info.iv = ref_iv[0]
+                data = self._protocol.client_udp_pre_encrypt(data)
+                #logging.debug("%s" % (binascii.hexlify(data),))
+                data = encrypt.encrypt_all_iv(self._protocol.obfs.server_info.key, self._method, 1, data, ref_iv)
+                if not data:
                     return
-            if self._forbidden_portset:
-                if sa[1] in self._forbidden_portset:
-                    logging.debug('Port %d is in forbidden list, reject' %
-                                    sa[1])
-                    # drop
-                    return
-            client = socket.socket(af, socktype, proto)
-            client_uid = uid
-            client.setblocking(False)
-            self._socket_bind_addr(client, af)
-            is_dns = False
-            if len(data) > 20 and data[11:19] == b"\x00\x01\x00\x00\x00\x00\x00\x00":
-                is_dns = True
             else:
-                pass
-                #logging.info("unknown data %s" % (binascii.hexlify(data),))
-            if sa[1] == 53 and is_dns: #DNS
-                logging.debug("DNS query %s from %s:%d" % (common.to_str(sa[0]), r_addr[0], r_addr[1]))
-                self._cache_dns_client[key] = (client, uid)
-            else:
-                self._cache[key] = (client, uid)
-            self._client_fd_to_server_addr[client.fileno()] = (r_addr, af)
-
-            self._sockets.add(client.fileno())
-            self._eventloop.add(client, eventloop.POLL_IN, self)
-
-            logging.debug('UDP port %5d sockets %d' % (self._listen_port, len(self._sockets)))
-
-            if uid is None:
-                user_id = self._listen_port
-            else:
-                user_id = struct.unpack('<I', client_uid)[0]
-        else:
-            client, client_uid = client_pair
-        self._cache.clear(self._udp_cache_size)
-        self._cache_dns_client.clear(16)
-
-        if self._is_local:
-            ref_iv = [encrypt.encrypt_new_iv(self._method)]
-            self._protocol.obfs.server_info.iv = ref_iv[0]
-            data = self._protocol.client_udp_pre_encrypt(data)
-            #logging.debug("%s" % (binascii.hexlify(data),))
-            data = encrypt.encrypt_all_iv(self._protocol.obfs.server_info.key, self._method, 1, data, ref_iv)
+                data = data[header_length:]
             if not data:
                 return
-        else:
-            data = data[header_length:]
-        if not data:
-            return
+        except Exception as e:
+            shell.print_exception(e)
+            logging.error("exception from user %d" % (user_id,))
+
         try:
-            #logging.info('UDP handle_server sendto %s:%d %d bytes' % (common.to_str(server_addr), server_port, len(data)))
             client.sendto(data, (server_addr, server_port))
             self.add_transfer_u(client_uid, len(data))
             if client_pair is None: # new request
                 addr, port = client.getsockname()[:2]
-                common.connect_log('UDP data to %s:%d from %s:%d by UID %d' %
-                        (common.to_str(server_addr), server_port, addr, port, user_id))
+                common.connect_log('UDP data to %s(%s):%d from %s:%d by user %d' %
+                        (common.to_str(remote_addr[0]), common.to_str(server_addr), server_port, addr, port, user_id))
         except IOError as e:
             err = eventloop.errno_from_exception(e)
+            logging.warning('IOError sendto %s:%d by user %d' % (server_addr, server_port, user_id))
             if err in (errno.EINPROGRESS, errno.EAGAIN):
                 pass
             else:
@@ -667,7 +646,7 @@ class UDPRelay(object):
         if self._closed:
             self._cache.clear(0)
             self._cache_dns_client.clear(0)
-            self._dns_cache.sweep()
+            #self._dns_cache.sweep()
             if self._eventloop:
                 self._eventloop.remove_periodic(self.handle_periodic)
                 self._eventloop.remove(self._server_socket)
@@ -679,7 +658,7 @@ class UDPRelay(object):
             before_sweep_size = len(self._sockets)
             self._cache.sweep()
             self._cache_dns_client.sweep()
-            self._dns_cache.sweep()
+            #self._dns_cache.sweep()
             if before_sweep_size != len(self._sockets):
                 logging.debug('UDP port %5d sockets %d' % (self._listen_port, len(self._sockets)))
             self._sweep_timeout()
