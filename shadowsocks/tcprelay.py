@@ -123,29 +123,6 @@ class SpeedTester(object):
             return self.sum_len >= self.max_speed
         return False
 
-class UDPAsyncDNSHandler(object):
-    def __init__(self, params):
-        self.params = params
-        self.remote_addr = None
-        self.call_back = None
-
-    def resolve(self, dns_resolver, remote_addr, call_back):
-        self.call_back = call_back
-        self.remote_addr = remote_addr
-        dns_resolver.resolve(remote_addr[0], self._handle_dns_resolved)
-
-    def _handle_dns_resolved(self, result, error):
-        if error:
-            logging.error("%s when resolve DNS" % (error,)) #drop
-            return
-        if result:
-            ip = result[1]
-            if ip:
-                if self.call_back:
-                    self.call_back(self.params, self.remote_addr, ip)
-                    return
-        logging.warning("can't resolve %s" % (self.remote_addr,))
-
 class TCPRelayHandler(object):
     def __init__(self, server, fd_to_handlers, loop, local_sock, config,
                  dns_resolver, is_local):
@@ -347,15 +324,11 @@ class TCPRelayHandler(object):
                 #logging.info('UDP over TCP sendto %d %s' % (len(data), binascii.hexlify(data)))
                 while len(self._udp_data_send_buffer) > 6:
                     length = struct.unpack('>H', self._udp_data_send_buffer[:2])[0]
-                    if length >= 0xff00:
-                        length = struct.unpack('>H', self._udp_data_send_buffer[1:3])[0] + 0xff00
 
                     if length > len(self._udp_data_send_buffer):
                         break
 
                     data = self._udp_data_send_buffer[:length]
-                    if length >= 0xff00:
-                        data = data[1:]
                     self._udp_data_send_buffer = self._udp_data_send_buffer[length:]
 
                     frag = common.ord(data[2])
@@ -369,8 +342,12 @@ class TCPRelayHandler(object):
                         continue
                     connecttype, addrtype, dest_addr, dest_port, header_length = header_result
                     if (addrtype & 7) == 3:
-                        handler = UDPAsyncDNSHandler(data[header_length:])
-                        handler.resolve(self._dns_resolver, (dest_addr, dest_port), self._handle_server_dns_resolved)
+                        af = common.is_ip(dest_addr)
+                        if af == False:
+                            handler = common.UDPAsyncDNSHandler(data[header_length:])
+                            handler.resolve(self._dns_resolver, (dest_addr, dest_port), self._handle_server_dns_resolved)
+                        else:
+                            return self._handle_server_dns_resolved(data[header_length:], (dest_addr, dest_port), dest_addr)
                     else:
                         return self._handle_server_dns_resolved(data[header_length:], (dest_addr, dest_port), dest_addr)
 
@@ -832,15 +809,15 @@ class TCPRelayHandler(object):
         buffer_size = len(sock.recv(recv_buffer_size, socket.MSG_PEEK))
         if up:
             buffer_size = min(buffer_size, self._recv_u_max_size)
-            self._recv_u_max_size = min(self._recv_u_max_size + TCP_MSS, BUF_SIZE)
+            self._recv_u_max_size = min(self._recv_u_max_size + self._tcp_mss - self._overhead, BUF_SIZE)
         else:
             buffer_size = min(buffer_size, self._recv_d_max_size)
-            self._recv_d_max_size = min(self._recv_d_max_size + TCP_MSS, BUF_SIZE)
+            self._recv_d_max_size = min(self._recv_d_max_size + self._tcp_mss - self._overhead, BUF_SIZE)
         if buffer_size == recv_buffer_size:
             return buffer_size
-        s = buffer_size % self._tcp_mss + self._overhead
-        if s > self._tcp_mss:
-            return buffer_size - (s - self._tcp_mss)
+        frame_size = self._tcp_mss - self._overhead
+        if buffer_size > frame_size:
+            buffer_size = int(buffer_size / frame_size) * frame_size
         return buffer_size
 
     def _on_local_read(self):
@@ -953,10 +930,7 @@ class TCPRelayHandler(object):
                     ip = socket.inet_pton(socket.AF_INET6, addr[0])
                     data = b'\x00\x04' + ip + port + data
                 size = len(data) + 2
-                if size >= 0xff00:
-                    data = common.chr(0xff) + struct.pack('>H', size - 0xff00 + 1) + data
-                else:
-                    data = struct.pack('>H', size) + data
+                data = struct.pack('>H', size) + data
                 #logging.info('UDP over TCP recvfrom %s:%d %d bytes to %s:%d' % (addr[0], addr[1], len(data), self._client_address[0], self._client_address[1]))
             else:
                 if self._is_local:
@@ -1074,7 +1048,7 @@ class TCPRelayHandler(object):
                     handle = True
                     self._on_remote_read(sock == self._remote_sock)
                 else:
-                    self._recv_d_max_size = TCP_MSS
+                    self._recv_d_max_size = self._tcp_mss - self._overhead
             elif event & eventloop.POLL_OUT:
                 handle = True
                 self._on_remote_write()
@@ -1087,7 +1061,7 @@ class TCPRelayHandler(object):
                     handle = True
                     self._on_local_read()
                 else:
-                    self._recv_u_max_size = TCP_MSS
+                    self._recv_u_max_size = self._tcp_mss - self._overhead
             elif event & eventloop.POLL_OUT:
                 handle = True
                 self._on_local_write()
